@@ -201,7 +201,7 @@
 
     <script type="module">
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-app.js';
-        import { getFirestore, collection, doc, getDoc, setDoc, addDoc, query, orderBy, limit, getDocs }
+        import { getFirestore, collection, doc, getDoc, setDoc, addDoc, deleteDoc, onSnapshot, query, orderBy, limit, where, getDocs }
             from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-firestore.js';
         import { getAuth, signInAnonymously }
             from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-auth.js';
@@ -340,7 +340,8 @@
             // Actions
             const actionsDiv = document.getElementById('actions');
             if (done) {
-                actionsDiv.innerHTML = '';
+                actionsDiv.innerHTML = `<button class="btn btn-rest" id="btn-undo">Undo</button>`;
+                document.getElementById('btn-undo').onclick = undoToday;
             } else {
                 actionsDiv.innerHTML = `
                     <button class="btn btn-done" id="btn-done">Done</button>
@@ -393,15 +394,18 @@
             if (restRemaining > 0 && unlogged.length > 0) {
                 const step = unlogged.length / restRemaining;
                 for (let i = 0; i < restRemaining; i++) {
-                    let idx = Math.round(step * (i + 1)) - 1;
-                    idx = Math.min(idx, unlogged.length - 1);
+                    const val = step * (i + 1);
+                    const f = Math.floor(val);
+                    // Python-compatible rounding (round .5 to even)
+                    const r = Math.abs(val - f - 0.5) < 1e-9 ? (f % 2 === 0 ? f : f + 1) : Math.round(val);
+                    let idx = Math.min(r - 1, unlogged.length - 1);
                     restIndices.add(unlogged[idx]);
                 }
             }
 
-            // Rewind cycle position to start of week
+            // Rewind cycle position to start of week (use deduped logged map)
             let doneThisWeek = 0;
-            for (const e of entries) {
+            for (const e of Object.values(logged)) {
                 if (e.date >= mondayStr && e.date <= today && e.status === 'done') doneThisWeek++;
             }
             let cyclePos = ((position - doneThisWeek) % cycle.length + cycle.length) % cycle.length;
@@ -526,7 +530,7 @@
         // --- Missed Days ---
         let missedDays = [];
 
-        function checkMissedDays() {
+        async function checkMissedDays() {
             missedDays = [];
             const lastLog = state.last_log_date;
             if (!lastLog) return;
@@ -538,11 +542,14 @@
 
             if (gap <= 1) return;
 
+            // Get existing entries to skip dates already logged
+            const entries = await getHistory(30);
+            const loggedDates = new Set(entries.map(e => e.date));
+
             let pos = position;
             for (let i = 1; i < gap; i++) {
-                const d = new Date(last);
-                d.setDate(d.getDate() + i);
-                const dateStr = d.toISOString().split('T')[0];
+                const dateStr = dateAdd(lastLog, i);
+                if (loggedDates.has(dateStr)) continue;
                 const workout = cycle[pos % cycle.length];
                 missedDays.push({ date: dateStr, workout, pos });
             }
@@ -610,6 +617,29 @@
             await render();
         }
 
+        async function undoToday() {
+            const today = todayStr();
+            const q = query(collection(db, 'logs'), where('date', '==', today));
+            const snap = await getDocs(q);
+            if (snap.empty) return;
+
+            const entry = snap.docs[0];
+            const data = entry.data();
+            await deleteDoc(entry.ref);
+
+            // Revert position if it was a "done" entry
+            if (data.status === 'done') {
+                position = ((position - 1) % cycle.length + cycle.length) % cycle.length;
+                state.position = position;
+            }
+
+            // Set last_log_date to the most recent remaining entry
+            const remaining = await getHistory(1);
+            state.last_log_date = remaining.length > 0 ? remaining[0].date : null;
+            await saveState();
+            await render();
+        }
+
         // --- Tabs ---
         document.querySelectorAll('.tab').forEach(tab => {
             tab.addEventListener('click', () => {
@@ -625,10 +655,24 @@
             try {
                 await signInAnonymously(auth);
                 await loadState();
-                checkMissedDays();
+                await checkMissedDays();
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('app').style.display = 'block';
                 await render();
+
+                // Listen for real-time state changes (e.g. from Mac app)
+                onSnapshot(doc(db, 'tracker', 'state'), async (snap) => {
+                    if (!snap.exists()) return;
+                    const newState = snap.data();
+                    if (newState.last_log_date !== state.last_log_date ||
+                        newState.position !== state.position) {
+                        state = newState;
+                        cycle = state.cycle;
+                        position = state.position;
+                        await checkMissedDays();
+                        await render();
+                    }
+                });
             } catch (e) {
                 document.getElementById('loading').textContent = 'Error: ' + e.message;
                 console.error(e);

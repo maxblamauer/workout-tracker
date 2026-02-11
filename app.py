@@ -264,9 +264,15 @@ class WorkoutTracker(rumps.App):
         if gap <= 1:
             return
 
+        # Build set of dates that already have entries
+        entries = get_history(self.db, limit=30)
+        logged_dates = set(e.get("date", "") for e in entries)
+
         changed = False
         for i in range(1, gap):
             missed_date = last + datetime.timedelta(days=i)
+            if missed_date.isoformat() in logged_dates:
+                continue  # already has an entry, skip
             workout = self.cycle[self.position % len(self.cycle)]
             day_label = missed_date.strftime("%A %b %-d")
 
@@ -316,6 +322,7 @@ class WorkoutTracker(rumps.App):
             else:
                 self.title = f"✅ {logged_type}"
             self.menu.add(rumps.MenuItem("Today's workout logged!", callback=None))
+            self.menu.add(rumps.MenuItem("↩ Undo", callback=self.undo_today))
             self.menu.add(None)
         else:
             self.title = f"🏋️ {current.title()}"
@@ -485,6 +492,30 @@ class WorkoutTracker(rumps.App):
             subtitle=f"{workout.title()} stays queued",
             message="Recovery is part of the process!",
         )
+        self.refresh_menu()
+
+    def undo_today(self, _):
+        """Remove today's log entry and revert state."""
+        today = datetime.date.today().isoformat()
+        docs = self.db.collection("logs").where("date", "==", today).stream()
+        entry = None
+        for doc in docs:
+            entry = doc.to_dict()
+            doc.reference.delete()
+            break  # delete only the first match
+
+        if entry is None:
+            return
+
+        # Revert position if it was a "done" entry
+        if entry.get("status") == "done":
+            self.position = (self.position - 1) % len(self.cycle)
+            self.state["position"] = self.position
+
+        # Set last_log_date to the most recent remaining entry
+        remaining = get_history(self.db, limit=1)
+        self.state["last_log_date"] = remaining[0].get("date") if remaining else None
+        save_state(self.db, self.state)
         self.refresh_menu()
 
     def edit_cycle(self, _):
