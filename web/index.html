@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1a1a2e">
+    <title>Workout Tracker</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 0 16px 32px;
+        }
+        .container { max-width: 420px; margin: 0 auto; }
+
+        /* Header */
+        .header {
+            text-align: center;
+            padding: 48px 0 24px;
+        }
+        .header .emoji { font-size: 48px; }
+        .header h1 { font-size: 28px; font-weight: 700; margin-top: 8px; color: #fff; }
+        .header .sub { font-size: 14px; color: #888; margin-top: 4px; }
+
+        /* Streak */
+        .streak {
+            text-align: center;
+            font-size: 18px;
+            padding: 12px;
+            background: #16213e;
+            border-radius: 12px;
+            margin-bottom: 16px;
+        }
+
+        /* Action buttons */
+        .actions {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        .btn {
+            flex: 1;
+            padding: 16px;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.1s, opacity 0.1s;
+        }
+        .btn:active { transform: scale(0.97); opacity: 0.9; }
+        .btn-done { background: #4ecca3; color: #1a1a2e; }
+        .btn-rest { background: #2a2a4a; color: #e0e0e0; border: 1px solid #3a3a5a; }
+        .btn:disabled { opacity: 0.4; cursor: default; transform: none; }
+
+        /* Cards */
+        .card {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+        .card h2 {
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #888;
+            margin-bottom: 12px;
+        }
+
+        /* Schedule */
+        .schedule-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            font-size: 15px;
+        }
+        .schedule-row.today { color: #4ecca3; font-weight: 600; }
+        .schedule-row .day { width: 40px; }
+        .schedule-row .mark { width: 24px; text-align: center; }
+        .schedule-row .workout { flex: 1; text-align: right; }
+
+        /* Rest counter */
+        .rest-counter {
+            text-align: center;
+            padding: 8px;
+            color: #888;
+            font-size: 14px;
+            border-top: 1px solid #2a2a4a;
+            margin-top: 8px;
+        }
+
+        /* Rotation */
+        .rotation-item {
+            padding: 6px 0;
+            font-size: 15px;
+        }
+        .rotation-item.current { color: #4ecca3; font-weight: 600; }
+
+        /* Summary stats */
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            font-size: 15px;
+        }
+        .stat-row .label { color: #888; }
+        .stat-row .value { font-weight: 600; }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        .tab {
+            flex: 1;
+            padding: 10px;
+            background: #16213e;
+            border: 1px solid #2a2a4a;
+            border-radius: 8px;
+            color: #888;
+            font-size: 13px;
+            text-align: center;
+            cursor: pointer;
+        }
+        .tab.active { background: #2a2a4a; color: #fff; border-color: #4ecca3; }
+
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Loading */
+        .loading {
+            text-align: center;
+            padding: 80px 0;
+            color: #888;
+            font-size: 18px;
+        }
+
+        /* Missed days banner */
+        .missed-banner {
+            background: #2a1a1a;
+            border: 1px solid #4a2a2a;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+        .missed-banner h3 { color: #ff6b6b; margin-bottom: 8px; font-size: 16px; }
+        .missed-banner p { color: #ccc; font-size: 14px; margin-bottom: 12px; }
+        .missed-actions { display: flex; gap: 8px; justify-content: center; }
+        .missed-actions .btn { flex: none; padding: 10px 20px; font-size: 14px; }
+        .btn-skip { background: #2a2a4a; color: #e0e0e0; border: 1px solid #3a3a5a; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="loading" class="loading">Loading...</div>
+        <div id="app" style="display:none;">
+            <!-- Missed days prompt -->
+            <div id="missed-section"></div>
+
+            <!-- Header -->
+            <div class="header">
+                <div class="emoji" id="header-emoji"></div>
+                <h1 id="header-title"></h1>
+                <div class="sub" id="header-sub"></div>
+            </div>
+
+            <!-- Streak -->
+            <div class="streak" id="streak-bar" style="display:none;"></div>
+
+            <!-- Action buttons -->
+            <div class="actions" id="actions"></div>
+
+            <!-- Tabs -->
+            <div class="tabs">
+                <div class="tab active" data-tab="schedule">Schedule</div>
+                <div class="tab" data-tab="rotation">Rotation</div>
+                <div class="tab" data-tab="summary">Summary</div>
+            </div>
+
+            <!-- Schedule -->
+            <div id="tab-schedule" class="tab-content active"></div>
+
+            <!-- Rotation -->
+            <div id="tab-rotation" class="tab-content"></div>
+
+            <!-- Summary -->
+            <div id="tab-summary" class="tab-content"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-app.js';
+        import { getFirestore, collection, doc, getDoc, setDoc, addDoc, query, orderBy, limit, getDocs }
+            from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-firestore.js';
+        import { getAuth, signInAnonymously }
+            from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-auth.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDXVz0I6oGNdd6n3WgpQHl4Kl0nJoa00-c",
+            authDomain: "workout-tracker-fabfa.firebaseapp.com",
+            projectId: "workout-tracker-fabfa",
+            storageBucket: "workout-tracker-fabfa.firebasestorage.app",
+            messagingSenderId: "71419323948",
+            appId: "1:71419323948:web:d4b4ee497f2e063e88d389"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        // --- State ---
+        let state = {};
+        let cycle = [];
+        let position = 0;
+
+        // --- Helpers ---
+        function todayStr() {
+            const d = new Date();
+            return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        }
+
+        function loggedToday() {
+            return state.last_log_date === todayStr();
+        }
+
+        function currentWorkout() {
+            return cycle[position % cycle.length];
+        }
+
+        function capitalize(s) {
+            return s.charAt(0).toUpperCase() + s.slice(1);
+        }
+
+        function getMondayOfWeek(dateStr) {
+            const date = new Date(dateStr + 'T00:00:00');
+            const day = date.getDay();
+            const diff = day === 0 ? -6 : 1 - day;
+            date.setDate(date.getDate() + diff);
+            return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+        }
+
+        function dateAdd(dateStr, days) {
+            const d = new Date(dateStr + 'T00:00:00');
+            d.setDate(d.getDate() + days);
+            return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        }
+
+        function dayLabel(dateStr) {
+            const d = new Date(dateStr + 'T00:00:00');
+            return d.toLocaleDateString('en-US', { weekday: 'short' });
+        }
+
+        function formatDate(dateStr) {
+            const d = new Date(dateStr + 'T00:00:00');
+            return d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+        }
+
+        // --- Firebase ---
+        async function loadState() {
+            const snap = await getDoc(doc(db, 'tracker', 'state'));
+            if (snap.exists()) {
+                state = snap.data();
+            } else {
+                state = { cycle: ['push', 'pull', 'legs'], position: 0, last_log_date: null, rest_days_per_week: 2 };
+                await setDoc(doc(db, 'tracker', 'state'), state);
+            }
+            cycle = state.cycle;
+            position = state.position;
+        }
+
+        async function saveState() {
+            state.cycle = cycle;
+            state.position = position;
+            await setDoc(doc(db, 'tracker', 'state'), state);
+        }
+
+        async function logEntry(workoutType, status, date) {
+            await addDoc(collection(db, 'logs'), {
+                date: date || todayStr(),
+                workout_type: workoutType,
+                status: status,
+                created_at: new Date()
+            });
+        }
+
+        async function getHistory(count = 60) {
+            const q = query(collection(db, 'logs'), orderBy('created_at', 'desc'), limit(count));
+            const snap = await getDocs(q);
+            return snap.docs.map(d => d.data());
+        }
+
+        // --- UI Rendering ---
+        async function render() {
+            const entries = await getHistory(60);
+            const today = todayStr();
+            const done = loggedToday();
+
+            // Find last entry for today
+            const todayEntry = entries.find(e => e.date === today);
+
+            // Header
+            if (done && todayEntry) {
+                const isRest = todayEntry.status === 'rest' || todayEntry.workout_type === 'rest';
+                document.getElementById('header-emoji').textContent = isRest ? '😴' : '✅';
+                document.getElementById('header-title').textContent = isRest ? 'Rest Day' : capitalize(todayEntry.workout_type);
+                document.getElementById('header-sub').textContent = 'Logged for today';
+            } else {
+                document.getElementById('header-emoji').textContent = '🏋️';
+                document.getElementById('header-title').textContent = capitalize(currentWorkout());
+                document.getElementById('header-sub').textContent = "Today's workout";
+            }
+
+            // Streak — count consecutive days with a "done" entry, backward from today
+            let streak = 0;
+            const doneDates = new Set(entries.filter(e => e.status === 'done').map(e => e.date));
+            let checkDate = todayStr();
+            while (doneDates.has(checkDate)) {
+                streak++;
+                checkDate = dateAdd(checkDate, -1);
+            }
+            const streakBar = document.getElementById('streak-bar');
+            if (streak > 0) {
+                streakBar.textContent = `🔥 ${streak} day streak`;
+                streakBar.style.display = 'block';
+            } else {
+                streakBar.style.display = 'none';
+            }
+
+            // Actions
+            const actionsDiv = document.getElementById('actions');
+            if (done) {
+                actionsDiv.innerHTML = '';
+            } else {
+                actionsDiv.innerHTML = `
+                    <button class="btn btn-done" id="btn-done">Done</button>
+                    <button class="btn btn-rest" id="btn-rest">Rest</button>
+                `;
+                document.getElementById('btn-done').onclick = markDone;
+                document.getElementById('btn-rest').onclick = markRest;
+            }
+
+            // Schedule
+            renderSchedule(entries);
+
+            // Rotation
+            renderRotation();
+
+            // Summary
+            renderSummary(entries);
+
+            // Missed days
+            renderMissedDays();
+        }
+
+        function renderSchedule(entries) {
+            const today = todayStr();
+            const mondayStr = getMondayOfWeek(today);
+            const doneToday = loggedToday();
+
+            // Build logged map
+            const logged = {};
+            for (const e of entries) {
+                if (!logged[e.date]) logged[e.date] = e;
+            }
+
+            // Find unlogged future days
+            const unlogged = [];
+            for (let i = 0; i < 7; i++) {
+                const day = dateAdd(mondayStr, i);
+                if (!logged[day] && day >= today) unlogged.push(i);
+            }
+
+            // Predict rest days
+            const restTarget = state.rest_days_per_week || 2;
+            let restTaken = 0;
+            for (const e of entries) {
+                const ed = e.date;
+                if (ed >= mondayStr && ed <= today && e.status === 'rest') restTaken++;
+            }
+            const restRemaining = Math.max(0, restTarget - restTaken);
+            const restIndices = new Set();
+            if (restRemaining > 0 && unlogged.length > 0) {
+                const step = unlogged.length / restRemaining;
+                for (let i = 0; i < restRemaining; i++) {
+                    let idx = Math.round(step * (i + 1)) - 1;
+                    idx = Math.min(idx, unlogged.length - 1);
+                    restIndices.add(unlogged[idx]);
+                }
+            }
+
+            // Rewind cycle position to start of week
+            let doneThisWeek = 0;
+            for (const e of entries) {
+                if (e.date >= mondayStr && e.date <= today && e.status === 'done') doneThisWeek++;
+            }
+            let cyclePos = ((position - doneThisWeek) % cycle.length + cycle.length) % cycle.length;
+
+            let html = '<div class="card"><h2>This Week</h2>';
+            for (let i = 0; i < 7; i++) {
+                const day = dateAdd(mondayStr, i);
+                const label = dayLabel(day);
+                const entry = logged[day];
+                const isToday = day === today;
+                const cls = isToday ? ' today' : '';
+                let mark = '', workout = '';
+
+                if (entry) {
+                    mark = entry.status === 'done' ? '+' : '-';
+                    workout = capitalize(entry.workout_type);
+                    if (entry.status === 'done') cyclePos = (cyclePos + 1) % cycle.length;
+                } else if (day < today) {
+                    mark = '·';
+                    workout = '—';
+                } else if (restIndices.has(i)) {
+                    mark = '·';
+                    workout = 'Rest';
+                } else {
+                    mark = isToday ? '🏋️' : '·';
+                    workout = capitalize(cycle[cyclePos % cycle.length]);
+                    cyclePos = (cyclePos + 1) % cycle.length;
+                }
+
+                const arrow = isToday ? ' ←' : '';
+                html += `<div class="schedule-row${cls}">
+                    <span class="day">${label}</span>
+                    <span class="mark">${mark}</span>
+                    <span class="workout">${workout}${arrow}</span>
+                </div>`;
+            }
+            html += `<div class="rest-counter">😴 Rest days: ${restTaken}/${restTarget}</div>`;
+            html += '</div>';
+            document.getElementById('tab-schedule').innerHTML = html;
+        }
+
+        function renderRotation() {
+            const displayPos = loggedToday()
+                ? ((position - 1) % cycle.length + cycle.length) % cycle.length
+                : position % cycle.length;
+            let html = '<div class="card"><h2>Rotation</h2>';
+            for (let i = 0; i < cycle.length; i++) {
+                const isCurrent = i === displayPos;
+                const cls = isCurrent ? ' current' : '';
+                const arrow = isCurrent ? '→ ' : '';
+                html += `<div class="rotation-item${cls}">${arrow}🏋️ ${capitalize(cycle[i])}</div>`;
+            }
+            html += '</div>';
+            document.getElementById('tab-rotation').innerHTML = html;
+        }
+
+        async function renderSummary(entries) {
+            if (entries.length === 0) {
+                document.getElementById('tab-summary').innerHTML = '<div class="card"><p>No data yet!</p></div>';
+                return;
+            }
+
+            // Find first date
+            let firstDate = null;
+            for (const e of entries) {
+                if (!firstDate || e.date < firstDate) firstDate = e.date;
+            }
+
+            const today = todayStr();
+            const totalDays = Math.floor((new Date(today) - new Date(firstDate)) / 86400000) + 1;
+            const done = entries.filter(e => e.status === 'done');
+            const rest = entries.filter(e => e.status === 'rest');
+            const skipped = entries.filter(e => e.status === 'skip');
+
+            // Type breakdown
+            const types = {};
+            for (const e of done) {
+                const t = capitalize(e.workout_type || '?');
+                types[t] = (types[t] || 0) + 1;
+            }
+
+            // Longest streak
+            const datesSet = new Set(done.map(e => e.date));
+            const sortedDates = [...datesSet].sort();
+            let longest = 0, streak = 1;
+            for (let i = 1; i < sortedDates.length; i++) {
+                const diff = (new Date(sortedDates[i]) - new Date(sortedDates[i-1])) / 86400000;
+                if (diff === 1) { streak++; }
+                else { longest = Math.max(longest, streak); streak = 1; }
+            }
+            longest = Math.max(longest, streak);
+            if (sortedDates.length === 0) longest = 0;
+
+            const weeks = Math.max(1, totalDays / 7);
+            const avg = (done.length / weeks).toFixed(1);
+
+            let html = '<div class="card"><h2>Summary</h2>';
+            html += `<div class="stat-row"><span class="label">Tracking since</span><span class="value">${formatDate(firstDate)}</span></div>`;
+            html += `<div class="stat-row"><span class="label">Total days</span><span class="value">${totalDays}</span></div>`;
+            html += `<div class="stat-row"><span class="label">Workouts</span><span class="value">${done.length}</span></div>`;
+            html += `<div class="stat-row"><span class="label">Rest days</span><span class="value">${rest.length}</span></div>`;
+            html += `<div class="stat-row"><span class="label">Skipped</span><span class="value">${skipped.length}</span></div>`;
+            html += '</div>';
+
+            if (Object.keys(types).length > 0) {
+                html += '<div class="card"><h2>Breakdown</h2>';
+                for (const [t, c] of Object.entries(types).sort()) {
+                    html += `<div class="stat-row"><span class="label">${t}</span><span class="value">${c}</span></div>`;
+                }
+                html += '</div>';
+            }
+
+            html += '<div class="card"><h2>Streaks</h2>';
+            html += `<div class="stat-row"><span class="label">Current</span><span class="value">${streak} days</span></div>`;
+            html += `<div class="stat-row"><span class="label">Longest</span><span class="value">${longest} days</span></div>`;
+            html += `<div class="stat-row"><span class="label">Avg/week</span><span class="value">${avg}</span></div>`;
+            html += '</div>';
+
+            document.getElementById('tab-summary').innerHTML = html;
+        }
+
+        // --- Missed Days ---
+        let missedDays = [];
+
+        function checkMissedDays() {
+            missedDays = [];
+            const lastLog = state.last_log_date;
+            if (!lastLog) return;
+
+            const today = todayStr();
+            const last = new Date(lastLog + 'T00:00:00');
+            const now = new Date(today + 'T00:00:00');
+            const gap = Math.floor((now - last) / 86400000);
+
+            if (gap <= 1) return;
+
+            let pos = position;
+            for (let i = 1; i < gap; i++) {
+                const d = new Date(last);
+                d.setDate(d.getDate() + i);
+                const dateStr = d.toISOString().split('T')[0];
+                const workout = cycle[pos % cycle.length];
+                missedDays.push({ date: dateStr, workout, pos });
+            }
+        }
+
+        function renderMissedDays() {
+            const container = document.getElementById('missed-section');
+            if (missedDays.length === 0) {
+                container.innerHTML = '';
+                return;
+            }
+
+            const m = missedDays[0];
+            container.innerHTML = `
+                <div class="missed-banner">
+                    <h3>Missed: ${formatDate(m.date)}</h3>
+                    <p>Scheduled: ${capitalize(m.workout)}</p>
+                    <div class="missed-actions">
+                        <button class="btn btn-done" id="missed-done">Done</button>
+                        <button class="btn btn-rest" id="missed-rest">Rest</button>
+                        <button class="btn btn-skip" id="missed-skip">Skip</button>
+                    </div>
+                </div>
+            `;
+            document.getElementById('missed-done').onclick = () => handleMissed('done');
+            document.getElementById('missed-rest').onclick = () => handleMissed('rest');
+            document.getElementById('missed-skip').onclick = () => handleMissed('skip');
+        }
+
+        async function handleMissed(action) {
+            const m = missedDays[0];
+            if (action === 'done') {
+                await logEntry(m.workout, 'done', m.date);
+                position = (position + 1) % cycle.length;
+            } else if (action === 'rest') {
+                await logEntry('rest', 'rest', m.date);
+            } else {
+                await logEntry(m.workout, 'skip', m.date);
+            }
+
+            missedDays.shift();
+            state.last_log_date = m.date;
+            state.position = position;
+            await saveState();
+            await render();
+        }
+
+        // --- Actions ---
+        async function markDone() {
+            if (loggedToday()) return;
+            const workout = currentWorkout();
+            await logEntry(workout, 'done');
+            position = (position + 1) % cycle.length;
+            state.position = position;
+            state.last_log_date = todayStr();
+            await saveState();
+            await render();
+        }
+
+        async function markRest() {
+            if (loggedToday()) return;
+            await logEntry('rest', 'rest');
+            state.last_log_date = todayStr();
+            await saveState();
+            await render();
+        }
+
+        // --- Tabs ---
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+            });
+        });
+
+        // --- Init ---
+        async function init() {
+            try {
+                await signInAnonymously(auth);
+                await loadState();
+                checkMissedDays();
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('app').style.display = 'block';
+                await render();
+            } catch (e) {
+                document.getElementById('loading').textContent = 'Error: ' + e.message;
+                console.error(e);
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>

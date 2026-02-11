@@ -97,6 +97,15 @@ class WorkoutTracker(rumps.App):
         self._missed_days_timer = rumps.Timer(self._deferred_missed_check, 2)
         self._missed_days_timer.start()
 
+        # Periodically check if the day has changed
+        self._current_date = datetime.date.today()
+        self._day_check_timer = rumps.Timer(self._check_day_change, 60)
+        self._day_check_timer.start()
+
+        # Sync state from Firebase every 5 minutes (picks up phone changes)
+        self._sync_timer = rumps.Timer(self._sync_from_firebase, 300)
+        self._sync_timer.start()
+
     def _hide_dock_icon(self, _):
         """Remove the Dock icon after the menu bar is set up."""
         import AppKit
@@ -107,6 +116,24 @@ class WorkoutTracker(rumps.App):
         """Run missed days check after the app is fully set up."""
         self._missed_days_timer.stop()
         self._check_missed_days()
+
+    def _sync_from_firebase(self, _):
+        """Re-read state from Firebase and refresh if changed."""
+        new_state = get_state(self.db)
+        if new_state.get("last_log_date") != self.state.get("last_log_date") or \
+           new_state.get("position") != self.state.get("position"):
+            self.state = new_state
+            self.cycle = self.state["cycle"]
+            self.position = self.state["position"]
+            self.refresh_menu()
+
+    def _check_day_change(self, _):
+        """Refresh menu and check missed days when the date rolls over."""
+        today = datetime.date.today()
+        if today != self._current_date:
+            self._current_date = today
+            self.refresh_menu()
+            self._check_missed_days()
 
     def current_workout(self):
         return self.cycle[self.position % len(self.cycle)]
@@ -121,18 +148,15 @@ class WorkoutTracker(rumps.App):
         entries = get_history(self.db, limit=60)
         if not entries:
             return 0
-        streak = 0
-        expected = datetime.date.today()
+        done_dates = set()
         for entry in entries:
-            try:
-                entry_date = datetime.date.fromisoformat(entry.get("date", ""))
-            except (ValueError, TypeError):
-                break
-            if entry_date != expected:
-                break
-            if entry.get("status") == "done":
-                streak += 1
-            expected -= datetime.timedelta(days=1)
+            if entry.get("status") == "done" and entry.get("date"):
+                done_dates.add(entry["date"])
+        streak = 0
+        check = datetime.date.today()
+        while check.isoformat() in done_dates:
+            streak += 1
+            check -= datetime.timedelta(days=1)
         return streak
 
     def _rest_days_this_week(self):
@@ -186,11 +210,14 @@ class WorkoutTracker(rumps.App):
                 idx = min(idx, len(unlogged) - 1)
                 rest_indices.add(unlogged[idx])
 
-        # Build schedule lines, advancing cycle only for non-rest days
-        cycle_pos = self.position
-        if done_today:
-            # Position already advanced from today's log
-            cycle_pos = (self.position - 1) % len(self.cycle)
+        # Rewind cycle_pos to the start of the week by subtracting
+        # all "done" entries this week (position already reflects them)
+        done_this_week = sum(
+            1 for e in logged.values()
+            if e.get("status") == "done"
+            and monday.isoformat() <= e.get("date", "") <= today.isoformat()
+        )
+        cycle_pos = (self.position - done_this_week) % len(self.cycle)
 
         days = []
         for i in range(7):
@@ -305,14 +332,16 @@ class WorkoutTracker(rumps.App):
         self.menu.add(None)
 
         # Cycle rotation
+        display_pos = (self.position - 1) % len(self.cycle) if done_today else self.position % len(self.cycle)
         cycle_menu = rumps.MenuItem("— Rotation —")
         for i, w in enumerate(self.cycle):
-            arrow = "→ " if i == (self.position % len(self.cycle)) else "    "
+            arrow = "→ " if i == display_pos else "    "
             cycle_menu.add(rumps.MenuItem(f"{arrow}🏋️ {w.title()}", callback=None))
         self.menu.add(cycle_menu)
         self.menu.add(None)
 
         self.menu.add(rumps.MenuItem("📅 View Schedule", callback=self.show_schedule))
+        self.menu.add(rumps.MenuItem("📊 Summary", callback=self.show_summary))
         self.menu.add(rumps.MenuItem("Edit Cycle...", callback=self.edit_cycle))
         self.menu.add(rumps.MenuItem("Rest Days/Week...", callback=self.edit_rest_target))
         self.menu.add(rumps.MenuItem("Quit", callback=rumps.quit_application))
@@ -328,6 +357,90 @@ class WorkoutTracker(rumps.App):
         lines.append(f"  😴 Rest days: {rest_taken}/{rest_target}")
         rumps.alert(
             title=f"📅 {week_label}",
+            message="\n".join(lines),
+            ok="OK",
+        )
+
+    def show_summary(self, _):
+        """Show all-time stats in a dialog."""
+        # Fetch all log entries
+        docs = (
+            self.db.collection("logs")
+            .order_by("created_at", direction=firestore.Query.ASCENDING)
+            .stream()
+        )
+        entries = [doc.to_dict() for doc in docs]
+
+        if not entries:
+            rumps.alert(title="📊 Summary", message="No data yet!", ok="OK")
+            return
+
+        # Start date
+        first_date = None
+        for e in entries:
+            try:
+                d = datetime.date.fromisoformat(e.get("date", ""))
+                if first_date is None or d < first_date:
+                    first_date = d
+            except (ValueError, TypeError):
+                pass
+
+        today = datetime.date.today()
+        total_days = (today - first_date).days + 1 if first_date else 0
+
+        # Counts
+        done = [e for e in entries if e.get("status") == "done"]
+        rest = [e for e in entries if e.get("status") == "rest"]
+        skipped = [e for e in entries if e.get("status") == "skip"]
+
+        # Workout type breakdown
+        type_counts = {}
+        for e in done:
+            wtype = e.get("workout_type", "?").title()
+            type_counts[wtype] = type_counts.get(wtype, 0) + 1
+
+        # Longest streak
+        dates_done = set()
+        for e in done:
+            try:
+                dates_done.add(datetime.date.fromisoformat(e.get("date", "")))
+            except (ValueError, TypeError):
+                pass
+        longest_streak = 0
+        if dates_done:
+            sorted_dates = sorted(dates_done)
+            streak = 1
+            for i in range(1, len(sorted_dates)):
+                if (sorted_dates[i] - sorted_dates[i - 1]).days == 1:
+                    streak += 1
+                else:
+                    longest_streak = max(longest_streak, streak)
+                    streak = 1
+            longest_streak = max(longest_streak, streak)
+
+        # Avg workouts per week
+        weeks = max(1, total_days / 7)
+        avg_per_week = len(done) / weeks
+
+        # Build summary
+        lines = []
+        if first_date:
+            lines.append(f"Tracking since {first_date.strftime('%b %-d, %Y')} ({total_days} days)")
+        lines.append("")
+        lines.append(f"Workouts:  {len(done)}")
+        lines.append(f"Rest days:  {len(rest)}")
+        lines.append(f"Skipped:  {len(skipped)}")
+        lines.append("")
+        if type_counts:
+            for wtype, count in sorted(type_counts.items()):
+                lines.append(f"  {wtype}:  {count}")
+            lines.append("")
+        lines.append(f"Current streak:  {self._get_streak()} days")
+        lines.append(f"Longest streak:  {longest_streak} days")
+        lines.append(f"Avg per week:  {avg_per_week:.1f} workouts")
+
+        rumps.alert(
+            title="📊 Summary",
             message="\n".join(lines),
             ok="OK",
         )

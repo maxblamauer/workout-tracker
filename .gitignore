@@ -2,11 +2,15 @@ venv/
 __pycache__/
 *.pyc
 .claude/
+.firebase/
 
-# Firebase credentials
+# Firebase credentials (exclude all JSON except config files)
 *.json
+!firebase.json
+!web/manifest.json
 !package.json
 
-# Screenshots
+# Images (personal photos, generated icons deployed separately)
 *.png
 *.jpg
+*.jpeg

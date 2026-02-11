@@ -1,0 +1,21 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper: check if user is an allowed writer
+    function isAllowedWriter() {
+      return request.auth != null &&
+        request.auth.uid in get(/databases/$(database)/documents/tracker/allowed_uids).data.uids;
+    }
+
+    match /tracker/{doc} {
+      allow read: if request.auth != null;
+      allow write: if isAllowedWriter();
+    }
+
+    match /logs/{doc} {
+      allow read: if request.auth != null;
+      allow write: if isAllowedWriter();
+    }
+  }
+}
